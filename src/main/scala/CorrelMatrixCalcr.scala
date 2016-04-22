@@ -19,6 +19,10 @@ object CorrelMatrixCalcr {
     grp.map(_.sorted.mkString(",")).sorted.mkString("|")
   }
 
+  def computeHash(grp: List[List[Int]]): BigInt = {
+    grp.map(_.sum).fold(1)(_ * _)
+  }
+
   def calcCorrelBetwGrps(grp1: List[Int], grp2: List[Int], correlMatrix: List[List[Double]]): Double = {
     val lsAvgCorrelOfEach = grp1.map(s1 => {
       val lsCorrelWithG2 = grp2.map(correlMatrix(_)(s1))
@@ -27,7 +31,12 @@ object CorrelMatrixCalcr {
     lsAvgCorrelOfEach.sum / lsAvgCorrelOfEach.length
   }
 
+  def printCorrelMatrix(correlMatrix: List[List[Double]]) {
+    correlMatrix.foreach(r => println(r.mkString("\t")))
+  }
+
   def main(args: Array[String]) {
+
     if (args.length == 0) {
       println("USAGE: [csv file with data] [YYYY-MM-DD] [num of days] [correl threshold for grouping] [print correl matrix]")
       System.exit(0)
@@ -38,6 +47,7 @@ object CorrelMatrixCalcr {
     val correlThreshold = args(3).toDouble
     val printCorMat = (args(4) == "T" || args(4) == "t")
     val symFile = args(5)
+    val bCalcMinVarcWei = (args(6) == "T" || args(6) == "t")
 
     val lines = scala.io.Source.fromFile(args(0)).getLines.toList
     val mapIdxSym = scala.io.Source.fromFile(symFile).getLines.toList.mkString(" ").split(" ").toList.zipWithIndex.map(x => (x._2, x._1)).toMap
@@ -62,37 +72,13 @@ object CorrelMatrixCalcr {
       val ls = lsFlattenedValues.zipWithIndex.collect {
         case (e, i) if ((i % numOfInstr) == x) => e
       }
-      lslsReturns = lslsReturns :+ SUtil.calcReturns(ls).map(_ - 1.0)
+      lslsReturns = lslsReturns :+ SUtil.calcReturns(ls).map(_ - 1.0).takeRight(numOfDays)
     })
 
-    var correlMatrix = List[List[Double]]()
-    for (i <- 0 until lslsReturns.length) {
-      var lsCorrelMatrixRow = List[Double]()
-      for (j <- 0 until lslsReturns.length) {
-        val subSet_i = lslsReturns(i).takeRight(numOfDays)
-        val subSet_j = lslsReturns(j).takeRight(numOfDays)
+    val correlMatrixStk = SUtil.calcCorrelMatrix(lslsReturns)
 
-        val mean_i = subSet_i.sum / subSet_i.length
-        val mean_j = subSet_j.sum / subSet_j.length
-
-        val dist_from_mean_i = subSet_i.map(_ - mean_i)
-        val dist_from_mean_j = subSet_j.map(_ - mean_j)
-
-        val var_i = dist_from_mean_i.map(x => x * x).sum / dist_from_mean_i.length
-        val var_j = dist_from_mean_j.map(x => x * x).sum / dist_from_mean_j.length
-
-        val dist_tup = dist_from_mean_i.zip(dist_from_mean_j)
-
-        val scale = 1000
-        val correl = Math.round(dist_tup.map(x => x._1 * x._2).sum /
-          dist_tup.length / Math.sqrt(var_i) / Math.sqrt(var_j) * scale).toDouble / scale
-
-        if (printCorMat) print(correl)
-        lsCorrelMatrixRow :+= correl
-        if (printCorMat) print("\t")
-      }
-      if (printCorMat) println
-      correlMatrix :+= lsCorrelMatrixRow
+    if (printCorMat) {
+      printCorrelMatrix(correlMatrixStk)
     }
 
     //--------------------------------------------------
@@ -109,7 +95,7 @@ object CorrelMatrixCalcr {
       }
       else {
 
-        val lsGrpCorAvg = groups.map(g => calcAvgGrpCorrel(x, g, correlMatrix))
+        val lsGrpCorAvg = groups.map(g => calcAvgGrpCorrel(x, g, correlMatrixStk))
 
         val friends = lsGrpCorAvg.zipWithIndex.sortBy(_._1).reverse.filter(_._1 > correlThreshold)
         if (friends.isEmpty) {
@@ -128,16 +114,49 @@ object CorrelMatrixCalcr {
     // second pass
     //--------------------------------------------------
     var shouldContinue = true
-    while (shouldContinue) {
-      val belongsToGrp = (0 until numOfInstr).map(x => {
-        groups.map(g => calcAvgGrpCorrel(x, g, correlMatrix)).zipWithIndex.sortBy(_._1).reverse.head._2
-      })
+    var count = 0
+    while (shouldContinue && count < 50) {
 
+      val belongsToGrp = (0 until numOfInstr).map(x => {
+        groups.map(g => calcAvgGrpCorrel(x, g, correlMatrixStk)).zipWithIndex.sortBy(_._1).reverse.head._2
+      })
       val groups_changed = belongsToGrp.zip(0 until numOfInstr).groupBy(_._1).map { case (grpNum, lsStk) => lsStk.map(_._2).toList }.toList
-      if (convToStringRepre(groups) != convToStringRepre(groups_changed)) groups = groups_changed
-      else shouldContinue = false
+
+      val lGroups = computeHash(groups)
+      val lGroupsChgd = computeHash(groups_changed)
+      if (lGroups == lGroupsChgd) {
+        shouldContinue = false
+      }
+      else {
+        groups = groups_changed
+      }
+
+      count += 1
     }
 
+    //--------------------------------------------------
+    // third pass
+    //--------------------------------------------------
+    while (shouldContinue) {
+
+      shouldContinue = false
+      (0 until numOfInstr).toList.foreach(s => {
+        val newGrp = groups.map(g => calcAvgGrpCorrel(s, g, correlMatrixStk)).zipWithIndex.sortBy(_._1).reverse.head._2
+        if (!groups(newGrp).contains(s)) {
+          //--------------------------------------------------
+          // update groups immediately
+          //--------------------------------------------------
+          groups = groups.take(newGrp).map(_.filter(_ != s)) :::
+            List(groups(newGrp) :+ s) :::
+            groups.takeRight(groups.length - newGrp - 1).map(_.filter(_ != s))
+          shouldContinue = true
+        }
+      })
+
+    }
+    //--------------------------------------------------
+
+    println
     //--------------------------------------------------
     // print groups
     //--------------------------------------------------
@@ -146,13 +165,46 @@ object CorrelMatrixCalcr {
       println("Group " + x._2.toString + ": " + x._1.map(mapIdxSym.get(_).get).mkString(","))
     })
 
-    //--------------------------------------------------
-    // correl matrix of groups
-    //--------------------------------------------------
-    (0 until groups.length).toList.foreach(g => {
-      val lsCorWithGrp = (0 until groups.length).toList.map(i => calcCorrelBetwGrps(groups(g), groups(i), correlMatrix))
-      println(lsCorWithGrp.map(j => Math.round(j*100.0)/100.0).mkString("\t"))
-    })
+    if (bCalcMinVarcWei) {
+
+      //--------------------------------------------------
+      // average out the individual stock return to become the group return
+      // don't know how to implement yet
+      // use the return series of the first sym
+      //--------------------------------------------------
+      val lslsGrpRtn = groups.map(g => lslsReturns(g.head))
+      val covarMatrixGrp = SUtil.calcCovarMatrix(lslsGrpRtn)
+      // printCorrelMatrix(covarMatrixGrp)
+
+      val lsAvgPiecewiseCovar = covarMatrixGrp.map(x => x.sum / x.length)
+      val avgOfAvgPiecewiseCovar = lsAvgPiecewiseCovar.sum / lsAvgPiecewiseCovar.length
+      val stdevOfAvgPiecewiseCovar = SUtil.stdev(lsAvgPiecewiseCovar)
+
+      val lsGaussianConversion = lsAvgPiecewiseCovar.map(x => 1.0 - SUtil.CNDF((x - avgOfAvgPiecewiseCovar) / stdevOfAvgPiecewiseCovar))
+
+      val lsProportionalAvgCovarWeight = lsGaussianConversion.map(x => x / lsGaussianConversion.sum)
+      val lsInverseVar = (0 until covarMatrixGrp.length).toList.map(x => 1.0 / covarMatrixGrp(x)(x))
+      val lsInverseVarWeight = lsInverseVar.map(x => x / lsInverseVar.sum)
+
+      val lsPdt = lsProportionalAvgCovarWeight.zip(lsInverseVarWeight).map(x => x._1 * x._2)
+      val lsFinalWeight = lsPdt.map(x => x / lsPdt.sum)
+
+      lsFinalWeight.zipWithIndex.foreach(x => {
+        print("Group ")
+        print(x._2)
+        print(": ")
+        print(x._1 * 100.0)
+        println("%")
+      })
+    }
+
+    // //--------------------------------------------------
+    // // correl matrix of groups
+    // //--------------------------------------------------
+    // (0 until groups.length).toList.foreach(g => {
+    //   val lsCorWithGrp = (0 until groups.length).toList.map(i => calcCorrelBetwGrps(groups(g), groups(i), correlMatrix))
+    //   println(lsCorWithGrp.map(j => Math.round(j*100.0)/100.0).mkString("\t"))
+    // })
 
   }
 }

@@ -4,7 +4,7 @@ import AssemblyKeys._
 name := "correl_matrix_calcr"
 
 // orgnization name (e.g., the package name of the project)
-organization := "org.nirvana"
+organization := "org.nirvana.correlmatrix"
 
 version := "1.0-SNAPSHOT"
 
