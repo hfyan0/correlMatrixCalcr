@@ -137,7 +137,8 @@ object CorrelMatrixCalcr {
     //--------------------------------------------------
     // third pass
     //--------------------------------------------------
-    while (shouldContinue) {
+    count = 0
+    while (shouldContinue && count < 50) {
 
       shouldContinue = false
       (0 until numOfInstr).toList.foreach(s => {
@@ -153,6 +154,7 @@ object CorrelMatrixCalcr {
         }
       })
 
+      count += 1
     }
     //--------------------------------------------------
 
@@ -163,6 +165,14 @@ object CorrelMatrixCalcr {
     println("No of groups = " + groups.length)
     groups.zipWithIndex.foreach(x => {
       println("Group " + x._2.toString + ": " + x._1.map(mapIdxSym.get(_).get).mkString(","))
+    })
+
+    groups.zipWithIndex.foreach(x => {
+      val symls = x._1.map(mapIdxSym.get(_).get)
+
+      symls.foreach(s => {
+        println(dfmt.print(uptoDate) + "_" + s + "," + x._2.toString)
+      })
     })
 
     if (bCalcMinVarcWei) {
