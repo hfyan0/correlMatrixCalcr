@@ -76,10 +76,20 @@ object CorrelMatrixCalcr {
     })
 
     val correlMatrixStk = SUtil.calcCorrelMatrix(lslsReturns)
+    val covarMatrixStk = SUtil.calcCovarMatrix(lslsReturns)
 
     if (printCorMat) {
       printCorrelMatrix(correlMatrixStk)
+      printCorrelMatrix(covarMatrixStk)
     }
+
+    //--------------------------------------------------
+    // portfolio stdev
+    //--------------------------------------------------
+    println
+    println
+    println("Portfolio stdev assuming equal weight: " +
+      (Math.sqrt(covarMatrixStk.map(ls => ls.sum).sum / covarMatrixStk.length / covarMatrixStk.length * 252) * 100.0).toString + " %")
 
     //--------------------------------------------------
     // grouping
